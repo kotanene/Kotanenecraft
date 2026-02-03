@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8">
+<title>Kotanene Craft v1.1 - FULL MOTOR</title>
+<style>
+  body { margin:0; overflow:hidden; background:#000; font-family: 'Segoe UI', sans-serif; image-rendering: pixelated; }
+  canvas { display:block; }
+  #ui { position:absolute; top:12px; left:12px; color:#fff; background:rgba(0,0,0,0.88); padding:14px; border-radius:10px; border:2px solid #d4af37; z-index:20; min-width:220px; pointer-events:none; }
+  .hotbar { position:absolute; bottom:24px; left:50%; transform:translateX(-50%); display:flex; gap:8px; background:rgba(30,30,40,0.92); padding:12px 16px; border:3px solid #555; border-radius:8px; z-index:20; }
+  .slot { width:52px; height:52px; border:3px solid #444; background:#1a1a2e; position:relative; border-radius:6px; box-shadow: inset 0 0 8px rgba(0,0,0,0.6); display:flex; align-items:center; justify-content:center; }
+  .slot.active { border-color:#00eaff; box-shadow:0 0 18px #00eaff; }
+  .slot .count { position:absolute; bottom:2px; right:4px; background:rgba(0,0,0,0.75); color:#eee; font-size:11px; padding:1px 5px; border-radius:4px; }
+  #inventory { position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); width:520px; height:420px; background:rgba(20,20,35,0.96); border:5px solid #8b5a2b; border-radius:12px; padding:20px; display:none; z-index:100; color:#eee; box-shadow:0 0 30px rgba(0,0,0,0.9); }
+  #inv-grid { display:grid; grid-template-columns: repeat(10, 48px); grid-gap:6px; margin-top:20px; }
+  .inv-slot { width:48px; height:48px; background:#111827; border:2px solid #4b5563; border-radius:6px; position:relative; cursor:pointer; }
+  #shop { position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); width:420px; background:#1e293b; border:5px solid #ca8a04; color:#f3f4f6; padding:25px; border-radius:16px; display:none; z-index:110; }
+  .shop-item { background:#334155; margin:12px 0; padding:16px; border-radius:10px; cursor:pointer; border:1px solid #475569; }
+  .shop-item:hover { background:#475569; transform:scale(1.02); }
+  button.close { position:absolute; top:12px; right:16px; font-size:24px; background:none; border:none; color:#94a3b8; cursor:pointer; }
+</style>
+</head>
+<body oncontextmenu="return false;">
+
+<div id="ui">
+  <div style="font-size:24px; font-weight:bold; color:#fbbf24;">💰 <span id="money">800</span> $</div>
+  <div style="margin-top:6px;">Araç: <span id="tool-name">Yumruk</span></div>
+  <div style="font-size:13px; color:#9ca3af; margin-top:8px;">E: Çanta | Y: Mağaza | 1-0: Hotbar | Sağ Tık: Koy</div>
+</div>
+
+<div class="hotbar" id="hotbar"></div>
+
+<div id="inventory">
+  <button class="close" onclick="toggleInventory()">×</button>
+  <h2 style="margin:0 0 16px 0; color:#fbbf24; text-align:center;">ENVANTER</h2>
+  <div id="inv-grid"></div>
+</div>
+
+<div id="shop">
+  <button class="close" onclick="toggleShop()">×</button>
+  <h2 style="margin:0 0 20px 0; color:#fbbf24; text-align:center;">MADENCİ PAZARI</h2>
+  <div class="shop-item" onclick="buyItem('iron_pick', 320, 'Demir Kazma')">⚒️ Demir Kazma – 320$</div>
+  <div class="shop-item" onclick="buyItem('diamond_pick', 1250, 'Elmas Kazma')">💎 Elmas Kazma – 1250$</div>
+</div>
+
+<canvas id="c"></canvas>
+
+<script>
+const c = document.getElementById("c");
+const ctx = c.getContext("2d");
+const TILE = 40;
+const GRAVITY = 0.75;
+const SPEED = 5.0;
+const JUMP = -14.5;
+
+let world = [];
+let camX = 0, camY = 0;
+let keys = {};
+let shopOpen = false, inventoryOpen = false;
+
+const player = { x: 400, y: 100, w: 32, h: 56, vx: 0, vy: 0, onGround: false, money: 800, facing: 1 };
+let hotbar = [ {type:"grass", count:64}, {type:"dirt", count:64}, {type:"stone", count:32}, null, null, null, null, null, null, null ];
+let fullInventory = new Array(40).fill(null);
+let selectedHotbarIndex = 0;
+let currentTool = "fist";
+
+const blockDefs = {
+  grass: {color:"#6ba34d", name:"Çim"},
+  dirt:  {color:"#9c6644", name:"Toprak"},
+  stone: {color:"#7f8c8d", name:"Taş"},
+  gold_ore:{color:"#a68a64", name:"Altın Cevheri", value:150}
+};
+
+function generateWorld() {
+  for(let x = -40; x < 100; x++) {
+    for(let y = 0; y < 40; y++) {
+      let type = y > 6 ? "dirt" : (y == 6 ? "grass" : "");
+      if(y > 15) type = "stone";
+      if(type === "stone" && Math.random() < 0.08) type = "gold_ore";
+      if(type) world.push({x: x*TILE, y: y*TILE, type});
+    }
+  }
+}
+
+function checkCollision(vx, vy) {
+  for (let b of world) {
+    if (player.x < b.x + TILE && player.x + player.w > b.x && player.y < b.y + TILE && player.y + player.h > b.y) {
+      if (vy > 0) { player.y = b.y - player.h; player.vy = 0; player.onGround = true; }
+      else if (vy < 0) { player.y = b.y + TILE; player.vy = 0; }
+      else if (vx > 0) player.x = b.x - player.w;
+      else if (vx < 0) player.x = b.x + TILE;
+    }
+  }
+}
+
+function addToInventory(type, count) {
+  for (let item of hotbar) { if (item && item.type === type) { item.count += count; return; } }
+  for (let i = 0; i < fullInventory.length; i++) { if (!fullInventory[i]) { fullInventory[i] = {type, count}; return; } }
+}
+
+function buyItem(id, price, name) {
+  if (player.money >= price) {
+    player.money -= price;
+    currentTool = id;
+    document.getElementById("tool-name").textContent = name;
+    toggleShop();
+  } else alert("Para yetersiz!");
+}
+
+function toggleInventory() { inventoryOpen = !inventoryOpen; document.getElementById("inventory").style.display = inventoryOpen ? "block" : "none"; if(inventoryOpen) updateFullInv(); }
+function toggleShop() { shopOpen = !shopOpen; document.getElementById("shop").style.display = shopOpen ? "block" : "none"; }
+
+function updateFullInv() {
+  const grid = document.getElementById("inv-grid"); grid.innerHTML = "";
+  fullInventory.forEach((item, i) => {
+    const s = document.createElement("div"); s.className = "inv-slot";
+    if(item) { s.style.background = blockDefs[item.type].color; s.innerHTML = `<span class="count">${item.count}</span>`; }
+    grid.appendChild(s);
+  });
+}
+
+function updateHotbarDisplay() {
+  const hb = document.getElementById("hotbar"); hb.innerHTML = "";
+  hotbar.forEach((item, i) => {
+    const s = document.createElement("div"); s.className = "slot" + (i === selectedHotbarIndex ? " active" : "");
+    if(item) { s.style.background = blockDefs[item.type].color; s.innerHTML = `<span class="count">${item.count}</span>`; }
+    hb.appendChild(s);
+  });
+}
+
+function update() {
+  if (shopOpen || inventoryOpen) return;
+  if (keys.KeyA) { player.vx = -SPEED; player.facing = -1; }
+  else if (keys.KeyD) { player.vx = SPEED; player.facing = 1; }
+  else player.vx *= 0.8;
+
+  player.vy += GRAVITY;
+  player.y += player.vy; checkCollision(0, player.vy);
+  player.x += player.vx; checkCollision(player.vx, 0);
+
+  if ((keys.KeyW || keys.Space) && player.onGround) { player.vy = JUMP; player.onGround = false; }
+  camX += (player.x - innerWidth/2 - camX) * 0.1;
+  camY += (player.y - innerHeight/2 - camY) * 0.1;
+  document.getElementById("money").textContent = player.money;
+}
+
+function draw() {
+  c.width = innerWidth; c.height = innerHeight;
+  ctx.fillStyle = "#87ceeb"; ctx.fillRect(0,0,c.width,c.height);
+  ctx.save(); ctx.translate(-camX, -camY);
+
+  world.forEach(b => {
+    if(b.x > camX - TILE && b.x < camX + c.width) {
+      ctx.fillStyle = blockDefs[b.type].color; ctx.fillRect(b.x, b.y, TILE, TILE);
+      if(b.type === "gold_ore") { ctx.fillStyle = "#fbbf24"; ctx.fillRect(b.x+10, b.y+10, 20, 20); }
+    }
+  });
+
+  // Kotanene
+  ctx.fillStyle = "#e11d48"; ctx.fillRect(player.x, player.y, player.w, player.h);
+  ctx.fillStyle = "#fbbf24"; ctx.fillRect(player.x+4, player.y-4, 24, 24); // Kafa
+  ctx.fillStyle = "#000"; ctx.fillRect(player.x + (player.facing > 0 ? 20 : 6), player.y+4, 4, 4); // Göz
+
+  ctx.restore();
+  update();
+  requestAnimationFrame(draw);
+}
+
+window.onkeydown = e => { 
+  keys[e.code] = true; 
+  if(e.code === "KeyE") toggleInventory(); if(e.code === "KeyY") toggleShop();
+  if(e.code.startsWith("Digit")) { 
+    let n = parseInt(e.code[5]) - 1; 
+    if(n === -1) n = 9; 
+    selectedHotbarIndex = n; updateHotbarDisplay(); 
+  }
+};
+window.onkeyup = e => keys[e.code] = false;
+
+c.onmousedown = e => {
+  if (shopOpen || inventoryOpen) return;
+  const tx = Math.floor((e.clientX + camX)/TILE)*TILE, ty = Math.floor((e.clientY + camY)/TILE)*TILE;
+
+  if (e.button === 0) { // KIRMA
+    let idx = world.findIndex(b => b.x === tx && b.y === ty);
+    if(idx !== -1) {
+      let b = world[idx];
+      addToInventory(b.type === "gold_ore" ? "stone" : b.type, 1);
+      if(b.type === "gold_ore") player.money += 150;
+      world.splice(idx, 1); updateHotbarDisplay();
+    }
+  } else if (e.button === 2) { // KOYMA
+    let item = hotbar[selectedHotbarIndex];
+    if(item && item.count > 0 && !world.some(b => b.x === tx && b.y === ty)) {
+      world.push({x: tx, y: ty, type: item.type});
+      item.count--; if(item.count <= 0) hotbar[selectedHotbarIndex] = null;
+      updateHotbarDisplay();
+    }
+  }
+};
+
+generateWorld(); updateHotbarDisplay(); draw();
+</script>
+</body>
+</html>
